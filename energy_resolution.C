@@ -113,6 +113,7 @@ void energy_resolution() {
     }
 
     for (int run = 0; run < run_numbers.size(); run++) {
+        int events_displayed = 0;
         int events_used = 0;
         // Process data file
         int run_number = run_numbers[run];
@@ -214,6 +215,43 @@ void energy_resolution() {
             }
 
             tot_fraction_vec[run]->Fill(num_tot);
+
+            if (num_tot == 8 && events_displayed < 10) {
+                events_displayed++;
+                std::vector<TH2*> sipm_waveforms;
+                for (int sipm = 0; sipm < 16; sipm++) {
+                    sipm_waveforms.push_back(new TH2F(Form("run%d_event%d_sipm%d_waveform", run_number, entry, sipm),
+                                                     Form("Run %d Event %d SiPM %d Waveform;Time Bin;ADC Signal", run_number, entry, sipm),
+                                                     20, 0, 20, 1024, 0, 1024));
+                    int channel = mapping[12][sipm];
+                    for (int t = 0; t < 20; t++) {
+                        sipm_waveforms[sipm]->Fill(t, adc[channel][t]);
+                    }
+                    for (int t = 0; t < 10; t++) {
+                        if (is_tot(tot[channel])) {
+                            sipm_waveforms[sipm]->Fill(7., 200.); 
+                        } else {
+                            // sipm_waveforms[sipm]->Fill(0., 0.);
+                        }
+                    }
+                    for (int i = 0; i < 20; i++) {
+                        sipm_waveforms[sipm]->Fill(0., 0.);
+                    }
+                }
+                TCanvas* c1 = new TCanvas("c1", "c1", 1200, 800);
+                c1->Divide(4, 4);
+                for (int sipm = 0; sipm < 16; sipm++) {
+                    c1->cd(sipm + 1);
+                    sipm_waveforms[sipm]->Draw("COLZ");
+                }
+                c1->SaveAs(Form("output/run%d_event%d_center_tot_waveforms.png", run_number, entry));
+                c1->Close();
+                for (int sipm = 0; sipm < 16; sipm++) {
+                    delete sipm_waveforms[sipm];
+                }
+            }
+
+
             if (num_tot > 0 && num_tot < 16) {
                 mixed_event = true;
             }

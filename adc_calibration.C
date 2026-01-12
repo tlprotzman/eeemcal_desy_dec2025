@@ -19,6 +19,7 @@
 #include <TPad.h>
 #include <TStyle.h>
 #include <TTree.h>
+#include <TProfile.h>
 
 #include "common.C"
 
@@ -43,6 +44,22 @@ void adc_calibration() {
     TH1* central_nine_energy    = new TH1F("central_nine_energy", "Central 3x3 Energy;Energy (ADC);Events", 500, 0, 75000);
     TH1* total_energy           = new TH1F("total_energy", "Total Energy;Energy (ADC);Events", 500, 0, 75000);
     TH2* cog_distribution       = new TH2F("cog_distribution", "Center of Gravity Distribution;X (# Crystals);Y (# Crystals)", 100, -0.5, 4.5, 100, -0.5, 4.5);
+    TH1 *toa_distribution        = new TH1F("toa_distribution", "ToA Distribution;ToA;Events", 1024, 0, 1024);
+    
+    std::vector<TH2*> E_vs_toa;
+    for (int sipm = 0; sipm < 16; sipm++) {
+        E_vs_toa.push_back(new TH2F(Form("E_vs_toa_sipm_%d", sipm), Form("SiPM %d Energy vs ToA;ToA;Energy (ADC)", sipm), 1024, 0, 1024, 500, 0, 3000));
+    }   
+    
+    std::vector<std::vector<TH2*>> toa_correlations;
+    for (int i = 0; i < 16; i++) {
+        toa_correlations.push_back(std::vector<TH2*>());
+        for (int j = 0; j < 16; j++) {
+            toa_correlations[i].push_back(new TH2F(Form("toa_correlation_sipm_%02d_sipm_%02d", i, j),
+                                                  Form("SiPM %02d vs SiPM %02d ToA;SiPM %02d ToA;SiPM %02d ToA", i, j, i, j),
+                                                  1024, 0, 1024, 1024, 0, 1024));
+        }
+    }
 
     std::vector<std::vector<TH1*>> sipm_energy;
     std::vector<TH1*> crystal_energy;
@@ -89,12 +106,15 @@ void adc_calibration() {
     TTree* tree = (TTree*)root_file->Get("events");
     uint32_t adc[576][20];
     uint32_t tot[576][20];
+    uint32_t toa[576][20];
     int tot_events = 0;
     tree->SetBranchAddress("adc", &adc);
     tree->SetBranchAddress("tot", &tot);
+    tree->SetBranchAddress("toa", &toa);
     tree->SetBranchStatus("*", 0);
     tree->SetBranchStatus("adc", 1);
     tree->SetBranchStatus("tot", 1);
+    tree->SetBranchStatus("toa", 1);
 
     Long64_t nentries = tree->GetEntries();
     if (n_events < nentries) {
@@ -115,6 +135,8 @@ void adc_calibration() {
 
         float signals[25];
         for (int crystal = 0; crystal < 25; crystal++) {
+            float mean_toa = 0;
+            uint32_t toa_used = 0;
             if (crystal == 9) {
                 continue;
             }
@@ -126,11 +148,32 @@ void adc_calibration() {
                 sipm_energy[crystal][sipm]->Fill(channel_signal);
                 pedestals->Fill(channel, (adc[channel][0] + adc[channel][1] + adc[channel][2]) / 3.0f);
                 crystal_signal += channel_signal;
+                uint32_t this_toa = get_toa(toa[channel]);
+                if (this_toa >= 0) {
+                    if (crystal == 12) {
+                        toa_distribution->Fill(this_toa);
+                        E_vs_toa[sipm]->Fill(this_toa, channel_signal);
+                        for (int other_sipm = 0; other_sipm < 16; other_sipm++) {
+                            if (other_sipm == sipm) {
+                                continue;
+                            }
+                            int other_channel = mapping[crystal][other_sipm];
+                            uint32_t other_toa = get_toa(toa[other_channel]);
+                            if (other_toa < 0) {
+                                continue;
+                            }
+                            toa_correlations[sipm][other_sipm]->Fill(this_toa, other_toa);
+                        }
+                    }
+                    mean_toa += this_toa;
+                    toa_used++;
+                }
                 if (!is_tot_event && is_tot(tot[channel])) {
                     is_tot_event = true;
                 }
             }
             signals[crystal] = crystal_signal * crystal_gain_factor->GetBinContent(crystal + 1);
+            mean_toa /= toa_used;
         }
         if (is_tot_event) {
             tot_events++;
@@ -282,13 +325,6 @@ void adc_calibration() {
     mean_calib /= 24;   // Since we are excluding crystal 9
     std::cout << "1 GeV signal calibration: " << mean_calib << std::endl;
 
-
-
-
-
-
-
-
     for (int i = 0; i < 25; i++) {
         canvas->Clear();
         canvas->Divide(4, 4);
@@ -301,9 +337,43 @@ void adc_calibration() {
         canvas->SaveAs("output/adc_calibration.pdf");
     }
     
-    
+    canvas->Clear();
+    toa_distribution->Draw("HIST");
+    canvas->SaveAs("output/adc_calibration.pdf");
 
+    canvas->Clear();
+    canvas->Divide(4, 4);
+    auto text = new TLatex();
+    text->SetNDC();
+    text->SetTextSize(0.04);
+    for (int sipm = 0; sipm < 16; sipm++) {
+        canvas->cd(sipm + 1);
+        // auto fit = new TF1(Form("toa_fit_sipm_%d", sipm), "pol1", 0, 1024);
+        E_vs_toa[sipm]->Draw("COLZ");
+        // E_vs_toa[sipm]->Fit(fit, "RQ");
+        // fit->SetLineColor(kRed);
+        // text->DrawLatex(0.15, 0.85, Form("Slope: %.3f#pm%0.3f", fit->GetParameter(1), fit->GetParError(1)));
+        E_vs_toa[sipm]->ProfileX()->Draw("same");
 
+        gPad->SetLogz();
+    }
+    canvas->SaveAs("output/adc_calibration.pdf");
+    gPad->SetLogz(0);
+
+    auto canvas2 = new TCanvas("toa_correlations", "", 8000, 8000);
+    canvas2->Divide(16, 16, 0.0005, 0.0005);
+    for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < 16; j++) {
+            if (j <= i) {
+                canvas2->cd(i * 16 + j + 1);
+                toa_correlations[i][j]->Draw("COLZ");
+                // gPad->SetLogz();
+            }
+        }
+    }
+    canvas2->SaveAs("output/adc_correlation.png");
+
+    canvas->Clear();
     canvas->SaveAs("output/adc_calibration.pdf)");
 
     float mean_x = cog_distribution->GetMean(1);

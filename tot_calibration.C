@@ -75,7 +75,6 @@ void tot_calibration() {
     std::vector<TH1*> tot_bin_distribution;
     std::vector<TH2*> tot_bin_vs_value;
     std::vector<std::vector<TH1*>> per_sipm_tot;
-    std::vector<std::vector<TH2*>> low_tot_waveforms;
     std::vector<std::vector<std::vector<TH2*>>> tot_covariance;
 
     TH2 *total_distribution =new TH2F("run%d_tot_energy", "ToT Energy;Energy (GeV);ToT Signal", 100, 0, 5, 1000, 0, 60000);
@@ -130,13 +129,9 @@ void tot_calibration() {
         tot_bin_vs_value.push_back(new TH2F(Form("run%d_tot_bin_vs_value", run_number), Form("Run %d ToT Bin vs ToT Value;ToT Value;ToT Bin", run_number), 20, 0, 20, 1024, 0, 4096));
 
         per_sipm_tot.push_back(std::vector<TH1*>());
-        low_tot_waveforms.push_back(std::vector<TH2*>());
         tot_covariance.push_back(std::vector<std::vector<TH2*>>());
         for (int i = 0; i < 16; i++) {
             per_sipm_tot[run].push_back(new TH1F(Form("run%d_sipm%d_tot_distribution", run_number, i), Form("Run %d SiPM %d ToT;ToT;Events", run_number, i), 1024, 0, 4096));
-            low_tot_waveforms[run].push_back(new TH2F(Form("run%d_sipm%d_low_tot_waveform", run_number, i),
-                                                    Form("Run %d SiPM %d Low ToT Waveform;Time Bin;ADC Signal", run_number, i),
-                                                    20, 0, 20, 4096, 0, 16384));
             tot_covariance[run].push_back(std::vector<TH2*>());
             for (int j = 0; j < 16; j++) {
                 tot_covariance[run][i].push_back(new TH2F(Form("run%d_sipm%d_sipm%d_tot_covariance", run_number, i, j),
@@ -198,10 +193,9 @@ void tot_calibration() {
                 float signal = 0;
                 int channel = mapping[12][sipm];
                 float gain = gain_factor->GetBinContent(12 * 16 + sipm + 1);
-                bool is_tot = calculate_signal(adc[channel], tot[channel], gain, signal);
-                if (!is_tot) {
-                    all_tot = false;
-                    continue;
+                all_tot &= calculate_signal(adc[channel], tot[channel], gain, signal);
+                if (!all_tot) {
+                    break;
                 }
                 if (use_widths) {
                     float channel_mean = peak_widths->GetBinContent(sipm + 1);
