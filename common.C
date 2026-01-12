@@ -171,6 +171,15 @@ bool is_tot(uint32_t *tot_values) {
     return false;
 }
 
+int32_t get_toa(uint32_t *toa_values) {
+    for (int i = 0; i < 20; ++i) {
+        if (toa_values[i] > 0) {
+            return toa_values[i];
+        }
+    }
+    return -1;
+}
+
 void fit_peak(TH1* hist) {
     float mean = hist->GetMean();
     float rms = hist->GetRMS();

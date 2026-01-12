@@ -45,6 +45,7 @@ void adc_calibration() {
     TH1* total_energy           = new TH1F("total_energy", "Total Energy;Energy (ADC);Events", 500, 0, 75000);
     TH2* cog_distribution       = new TH2F("cog_distribution", "Center of Gravity Distribution;X (# Crystals);Y (# Crystals)", 100, -0.5, 4.5, 100, -0.5, 4.5);
     TH1 *toa_distribution        = new TH1F("toa_distribution", "ToA Distribution;ToA;Events", 1024, 0, 1024);
+    TH1 *toa_sample = new TH1F("toa_sample", "ToA Sample Distribution;Sample;Events", 20, 0, 20);
     
     std::vector<TH2*> E_vs_toa;
     for (int sipm = 0; sipm < 16; sipm++) {
@@ -152,6 +153,14 @@ void adc_calibration() {
                 if (this_toa >= 0) {
                     if (crystal == 12) {
                         toa_distribution->Fill(this_toa);
+                        int timebin = -1;
+                        for (int sample = 0; sample < 20; sample++) {
+                            if (toa[channel][sample]) {
+                                timebin = sample;
+                                break;
+                            }
+                        }
+                        toa_sample->Fill(timebin);
                         E_vs_toa[sipm]->Fill(this_toa, channel_signal);
                         for (int other_sipm = 0; other_sipm < 16; other_sipm++) {
                             if (other_sipm == sipm) {
@@ -339,6 +348,10 @@ void adc_calibration() {
     
     canvas->Clear();
     toa_distribution->Draw("HIST");
+    canvas->SaveAs("output/adc_calibration.pdf");
+
+    canvas->Clear();
+    toa_sample->Draw("HIST");
     canvas->SaveAs("output/adc_calibration.pdf");
 
     canvas->Clear();
