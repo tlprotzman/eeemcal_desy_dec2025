@@ -22,6 +22,7 @@
 #include <TSpline.h>
 #include <TFitResult.h>
 #include <TFitResultPtr.h>
+#include <TParameter.h>
 
 #include "common.C"
 
@@ -46,6 +47,21 @@ void tot_calibration() {
 
     gStyle->SetOptStat(0);
     auto mapping = read_mapping("eeemcal_desy_dec2025_mapping.csv");
+
+    float adc_calib = 0;
+    TFile *adc_calib_file = TFile::Open("output/adc_to_gev_calibration.root", "READ");
+    if (adc_calib_file && !adc_calib_file->IsZombie()) {
+        TParameter<float>* adc_calib_param = (TParameter<float>*)adc_calib_file->Get("mean_adc_to_gev_calibration");
+        if (adc_calib_param) {
+            adc_calib = adc_calib_param->GetVal();
+            std::cout << "Loaded ADC to GeV calibration: " << adc_calib << std::endl;
+        }
+    }
+    if (adc_calib == 0) {
+        std::cerr << "Error: ADC to GeV calibration not found!" << std::endl;
+        return;
+    }
+    adc_calib_file->Close();
 
     TH1* gain_factor = nullptr;
     TH1* crystal_gain_factor;
@@ -368,6 +384,19 @@ void tot_calibration() {
     range_two_fit->Draw("same");
     total_fit->Draw("same");
     canvas->SaveAs("output/tot_calib.pdf)");
+
+    TFile *tot_calib_file = TFile::Open("output/tot_calibration_values.root", "RECREATE");
+    TParameter<float>* tot_c0 = new TParameter<float>("tot_c0", total_fit->GetParameter(0));
+    TParameter<float>* tot_c1 = new TParameter<float>("tot_c1", total_fit->GetParameter(1));
+    TParameter<float>* tot_c2 = new TParameter<float>("tot_c2", total_fit->GetParameter(2));
+    TParameter<float>* tot_a0 = new TParameter<float>("tot_a0", range_two_fit->GetParameter(0));
+    TParameter<float>* tot_a1 = new TParameter<float>("tot_a1", range_two_fit->GetParameter(1));
+    tot_c0->Write();
+    tot_c1->Write();
+    tot_c2->Write();
+    tot_a0->Write();
+    tot_a1->Write();
+    tot_calib_file->Close();
 
     if (!use_widths) {
         TFile *tot_widths = TFile::Open("output/tot_widths.root", "RECREATE");

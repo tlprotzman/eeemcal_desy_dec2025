@@ -29,14 +29,8 @@ float sigma_x = 0.184758 * sigma_cut;
 float center_y = 1.9688;
 float sigma_y = 0.195137 * sigma_cut;
 
-float adc_calib = 26704.4;  // 32444.1 Signal_ADC = 1 GeV 
+// float adc_calib = 26704.4;  // 32444.1 Signal_ADC = 1 GeV 
 // float adc_calib = 57854.3;  // v3
-
-double c0 = -0.51388;
-double c1 = 7.09861e-05;
-double c2 = 4.08168e-10;
-double a0 = 0.0681016;
-double a1 = 5.80319e-05;
 
 int signal_method = 2;
 

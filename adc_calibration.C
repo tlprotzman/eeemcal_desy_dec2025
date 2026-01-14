@@ -20,6 +20,7 @@
 #include <TStyle.h>
 #include <TTree.h>
 #include <TProfile.h>
+#include <TParameter.h>
 
 #include "common.C"
 
@@ -40,7 +41,7 @@ void adc_calibration() {
     int remaining_indexes[16] = {0, 1, 2, 3, 4, 5, 6, 10, 11, 15, 16, 20, 21, 22, 23, 24};
 
 
-    TH1* central_crystal_energy = new TH1F("central_crystal_energy", "Central Crystal Energy;Energy (ADC);Events", 500, 0, 75000);
+    TH1* central_crystal_energy = new TH1F("central_crystal_energy", "Central Crystal Energy;Energy (`);Events", 500, 0, 75000);
     TH1* central_nine_energy    = new TH1F("central_nine_energy", "Central 3x3 Energy;Energy (ADC);Events", 500, 0, 75000);
     TH1* total_energy           = new TH1F("total_energy", "Total Energy;Energy (ADC);Events", 500, 0, 75000);
     TH2* cog_distribution       = new TH2F("cog_distribution", "Center of Gravity Distribution;X (# Crystals);Y (# Crystals)", 100, -0.5, 4.5, 100, -0.5, 4.5);
@@ -333,6 +334,12 @@ void adc_calibration() {
     canvas->SaveAs("output/adc_calibration.pdf");
     mean_calib /= 24;   // Since we are excluding crystal 9
     std::cout << "1 GeV signal calibration: " << mean_calib << std::endl;
+
+    TFile* calib_file = TFile::Open("output/adc_to_gev_calibration.root", "RECREATE");
+    TParameter<float>* mean_calib_param = new TParameter<float>("mean_adc_to_gev_calibration", mean_calib);
+    mean_calib_param->Write();
+    calib_file->Close();
+
 
     for (int i = 0; i < 25; i++) {
         canvas->Clear();

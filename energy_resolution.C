@@ -22,6 +22,7 @@
 #include <TGraph.h>
 #include <TLegend.h>
 #include <TGraphErrors.h>
+#include <TParameter.h>
 
 #include "common.C"
 
@@ -49,6 +50,55 @@ void energy_resolution() {
         //     r += 5;
         // }
     }
+
+    float adc_calib = 0;
+    bool values_set = true;
+    TFile *adc_calib_file = TFile::Open("output/adc_to_gev_calibration.root", "READ");
+    if (adc_calib_file && !adc_calib_file->IsZombie()) {
+        TParameter<float>* adc_calib_param = (TParameter<float>*)adc_calib_file->Get("mean_adc_to_gev_calibration");
+        if (adc_calib_param) {
+            adc_calib = adc_calib_param->GetVal();
+            std::cout << "Loaded ADC to GeV calibration: " << adc_calib << std::endl;
+        } else {
+            values_set = false;
+        }
+    } else {
+        values_set = false;
+    }
+    if (!values_set) {
+        std::cerr << "Error: ADC to GeV calibration not found!" << std::endl;
+        return;
+    }
+    adc_calib_file->Close();
+
+    values_set = true;
+    float c0, c1, c2, a0, a1 = 0;
+    TFile *tot_calib_file = TFile::Open("output/tot_calibration_values.root", "READ");
+    if (tot_calib_file && !tot_calib_file->IsZombie()) {
+        TParameter<float>* c0_param = (TParameter<float>*)tot_calib_file->Get("tot_c0");
+        TParameter<float>* c1_param = (TParameter<float>*)tot_calib_file->Get("tot_c1");
+        TParameter<float>* c2_param = (TParameter<float>*)tot_calib_file->Get("tot_c2");
+        TParameter<float>* a0_param = (TParameter<float>*)tot_calib_file->Get("tot_a0");
+        TParameter<float>* a1_param = (TParameter<float>*)tot_calib_file->Get("tot_a1");
+        if (c0_param && c1_param && c2_param && a0_param && a1_param) {
+            c0 = c0_param->GetVal();
+            c1 = c1_param->GetVal();
+            c2 = c2_param->GetVal();
+            a0 = a0_param->GetVal();
+            a1 = a1_param->GetVal();
+            std::cout << "Loaded ToT calibration: " << c0 << ", " << c1 << ", " << c2 << ", " << a0 << ", " << a1 << std::endl;
+        } else {
+
+            values_set = false;
+        }
+    } else {
+        values_set = false;
+    }
+    if (!values_set) {
+        std::cerr << "Error: ToT calibration not found!" << std::endl;
+        return;
+    }
+    tot_calib_file->Close();
 
 
     int central_crystal_index = 12;
@@ -216,7 +266,7 @@ void energy_resolution() {
 
             tot_fraction_vec[run]->Fill(num_tot);
 
-            if (num_tot == 8 && events_displayed < 10) {
+            if (false && num_tot == 8 && events_displayed < 10) {
                 events_displayed++;
                 std::vector<TH2*> sipm_waveforms;
                 for (int sipm = 0; sipm < 16; sipm++) {
