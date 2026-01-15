@@ -1,11 +1,21 @@
 #include <map>
 #include <vector>
 
+#include <TFitResult.h>
+#include <TFitResultPtr.h>
+#include <TF1.h>
+#include <TH1.h>
+#include <TFile.h>
+#include <TTree.h>
+#include <TError.h>
+
 #include "common.C"
 
 
 void gain_match() {
     gStyle->SetOptStat(0);
+    gErrorIgnoreLevel = kWarning;
+
     std::vector<int> run_numbers = {385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 410, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 407, 408, 409};
     std::vector<int> run_crystal = { 19,  23,  24,  18,  13,  14,   8,   3,   4,   9,   2,   7,  12,  17,  22,  21,  16,  11,   6,   1,   0,   5,  10,  15,  20};
     std::vector<TH1*> histograms(400); // 25 crystals * 16 SiPMs
@@ -27,11 +37,10 @@ void gain_match() {
 
     // Process each run
     for (int i = 0; i < run_numbers.size(); i++) {
+        print_progress(i);
         int run_number = run_numbers[i];
         int crystal = run_crystal[i];
-        char file_path[256];
-        sprintf(file_path, "/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number);
-        TFile* root_file = TFile::Open(file_path);
+        TFile* root_file = TFile::Open(Form("/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number));
         TTree* tree = (TTree*)root_file->Get("events");
         uint32_t adc[576][20];
         tree->SetBranchAddress("adc", &adc);
@@ -60,7 +69,12 @@ void gain_match() {
         float fit_min = mean - 1.5 * rms;
         float fit_max = mean + 1.5 * rms;
         TF1* rough_fit = new TF1("rough_fit", "gaus", fit_min, fit_max);
-        hist->Fit(rough_fit, "RQ");
+        auto fit_result = hist->Fit(rough_fit, "RQS");
+        if (fit_result->Status() != 0) {
+            std::cout << Form("Channel %d: Initial fit failed, skipping...", channel) << std::endl;
+            continue;
+            peak_locations[channel] = 0;
+        }
         float peak = rough_fit->GetParameter(1);
         float sigma = rough_fit->GetParameter(2);
         rough_fit->SetLineColor(kBlue);
@@ -73,7 +87,7 @@ void gain_match() {
 
         TF1* final_fit = new TF1("final_fit", "crystalball", peak - sigma, peak + sigma);
         final_fit->SetParameters(second_fit->GetParameter(0), peak, sigma, 1.5, 2.0);
-        hist->Fit(final_fit, "RQ");
+        hist->Fit(final_fit, "RMQ");
 
         peak_locations[channel] = final_fit->GetParameter(1);
     }
@@ -99,7 +113,7 @@ void gain_match() {
             if ((crystal == 21) && (sipm == 1 || sipm == 4 || sipm == 10 || sipm == 11 || sipm == 13 || sipm == 14 || sipm == 15)) {    // Dead channels
                 continue;
             }
-            if (crystal == 15 && sipm == 10) {  // Looks very weird...
+            if (crystal == 15 && (sipm == 10 || sipm == 0 || sipm == 4 || sipm == 13 || sipm == 11)) {  // Looks very weird...
                 continue;
             }
             mean_peak += peak_locations[crystal * 16 + sipm];
@@ -138,9 +152,12 @@ void gain_match() {
     // Calculate per crystal gain factors
     float mean_crystal_signal = 0;
     for (int crystal = 0; crystal < 25; crystal++) {
+        if (crystal == 9) {
+            continue; // Bad crystal
+        }
         mean_crystal_signal += crystal_mean[crystal];
     }
-    mean_crystal_signal /= 25;
+    mean_crystal_signal /= 24;
     std::cout << Form("Mean across all crystals: %.0f", mean_crystal_signal);
     std::vector<float> crystal_gain;
     for (int crystal = 0; crystal < 25; crystal++) {
@@ -161,7 +178,7 @@ void gain_match() {
     gain_factors[21 * 16 + 15] = 0; // Crystal 21 SiPM 15
 
     // Save all histograms to a single PDF
-    char output_file[256] = "output/gain_matching.pdf";
+    const char* output_file = "output/gain_matching.pdf";
     TLatex *text = new TLatex();
     text->SetNDC();
     text->SetTextSize(0.04);

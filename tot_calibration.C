@@ -23,6 +23,7 @@
 #include <TFitResult.h>
 #include <TFitResultPtr.h>
 #include <TParameter.h>
+#include <TError.h>
 
 #include "common.C"
 
@@ -31,13 +32,15 @@ long n_events = 1000000;
 // n_events = 100;
 
 
-float tot_min_cut = 10000;
+float tot_min_cut = 0000;
 
 std::vector<int> run_numbers = {330};
 std::vector<float> energies  = {3.8};
 
 
 void tot_calibration() {
+    gErrorIgnoreLevel = kWarning;
+
     run_numbers.clear();
     energies.clear();
     for (int r = 319; r <= 338; r++) {
@@ -123,9 +126,7 @@ void tot_calibration() {
         int run_number = run_numbers[run];
         float energy = energies[run];
         // Process data file
-        char file_path[256];
-        sprintf(file_path, "/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number);
-        TFile* root_file = TFile::Open(file_path);
+        TFile* root_file = TFile::Open(Form("/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number));
         TTree* tree = (TTree*)root_file->Get("events");
         uint32_t adc[576][20];
         uint32_t tot[576][20];
@@ -146,10 +147,10 @@ void tot_calibration() {
 
         per_sipm_tot.push_back(std::vector<TH1*>());
         tot_covariance.push_back(std::vector<std::vector<TH2*>>());
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < sipms_to_use; i++) {
             per_sipm_tot[run].push_back(new TH1F(Form("run%d_sipm%d_tot_distribution", run_number, i), Form("Run %d SiPM %d ToT;ToT;Events", run_number, i), 1024, 0, 4096));
             tot_covariance[run].push_back(std::vector<TH2*>());
-            for (int j = 0; j < 16; j++) {
+            for (int j = 0; j < sipms_to_use; j++) {
                 tot_covariance[run][i].push_back(new TH2F(Form("run%d_sipm%d_sipm%d_tot_covariance", run_number, i, j),
                                                         Form("Run %d SiPM %d vs SiPM %d ToT;SiPM %d ToT;SiPM %d ToT", run_number, i, j, i, j),
                                                         1024, 0, 4096, 1024, 0, 4096));
@@ -184,7 +185,7 @@ void tot_calibration() {
                     continue;
                 }
                 float crystal_signal = 0.0f;
-                for (int sipm = 0; sipm < 16; sipm++) {
+                for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                     int channel = mapping[crystal][sipm];
                     float gain = gain_factor->GetBinContent(crystal * 16 + sipm + 1);
                     float channel_signal = calculate_signal(adc[channel], gain);
@@ -205,7 +206,7 @@ void tot_calibration() {
             std::vector<float> sipm_signals(16, 0);
             int channels_used = 0;
             bool all_tot = true;
-            for (int sipm = 0; sipm < 16; sipm++) {
+            for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                 float signal = 0;
                 int channel = mapping[12][sipm];
                 float gain = gain_factor->GetBinContent(12 * 16 + sipm + 1);
@@ -230,20 +231,20 @@ void tot_calibration() {
                 center_signal += signal * gain;
                 channels_used++;
             }
-            if (!all_tot || channels_used != 16) {
+            if (!all_tot || channels_used != sipms_to_use) {
                 continue;
             }
             // normalize the center signal to 16 channels used
             if (channels_used > 0) {
-                center_signal *= (16.0f / channels_used);
+                center_signal *= ((float)sipms_to_use / channels_used);
             }
 
             if (center_signal < tot_min_cut) {
                 center_signal = 0;
             }
             // Fill the covariance matrices
-            for (int i = 0; i < 16; i++) {
-                for (int j = 0; j < 16; j++) {
+            for (int i = 0; i < sipms_to_use; i++) {
+                for (int j = 0; j < sipms_to_use; j++) {
                     tot_covariance[run][i][j]->Fill(sipm_signals[i], sipm_signals[j]);
                 }
             }
@@ -271,8 +272,8 @@ void tot_calibration() {
             total_distribution->Fill(energy - non_central_energy, center_signal);
             total_distribution_invt->Fill(center_signal, energy - non_central_energy);
         }
-        std::cout << std::endl;
-        std::cout << "Total ToT events skipped: " << tot_events << std::endl;
+        // std::cout << std::endl;
+        std::cout << "\rTotal ToT events skipped: " << tot_events << std::endl;
     }
 
     
@@ -311,7 +312,7 @@ void tot_calibration() {
 
         auto pad = canvas->cd(5);
         pad->Divide(4, 4, 0, 0);
-        for (int sipm = 0; sipm < 16; sipm++) {
+        for (int sipm = 0; sipm < sipms_to_use; sipm++) {
             pad->cd(sipm + 1);
             // pad->SetMargin(0, 0, 0, 0);
             per_sipm_tot[run][sipm]->SetTitle("");
@@ -323,7 +324,7 @@ void tot_calibration() {
             fit->SetParameter(0, per_sipm_tot[run][sipm]->GetBinContent(per_sipm_tot[run][sipm]->GetMaximumBin()));
             fit->SetParameter(1, mean);
             fit->SetParameter(2, rms);
-            auto result = per_sipm_tot[run][sipm]->Fit(fit, "RS");
+            auto result = per_sipm_tot[run][sipm]->Fit(fit, "RQS");
             // check if the fit failed
             if (result->Status() != 0 || fit->GetNDF() < 20) {
                 std::cerr << "Warning: Fit failed for run " << run_numbers[run] << " SiPM " << sipm << std::endl;
@@ -333,7 +334,7 @@ void tot_calibration() {
                 fit->SetParameter(0, 200);
                 fit->SetParameter(1, 2200);
                 fit->SetParameter(2, 500);
-                per_sipm_tot[run][sipm]->Fit(fit, "RS");
+                per_sipm_tot[run][sipm]->Fit(fit, "RQS");
             }
             per_sipm_tot[run][sipm]->Draw("hist");
             fit->Draw("same");
@@ -350,8 +351,8 @@ void tot_calibration() {
         if (do_covariance) {
             canvas->Clear();
             canvas->Divide(16, 16, 0, 0);
-            for (int i = 0; i < 16; i++) {
-                for (int j = 0; j < 16; j++) {
+            for (int i = 0; i < sipms_to_use; i++) {
+                for (int j = 0; j < sipms_to_use; j++) {
                     if (j <= i) {
                         canvas->cd(i * 16 + j + 1);
                         tot_covariance[run][i][j]->Draw("colz");
@@ -365,17 +366,18 @@ void tot_calibration() {
     total_distribution->Draw("colz");
     canvas->SaveAs("output/tot_calib.pdf");
 
+    float scale_factor = 16.0f / sipms_to_use;
 
-    TF1 *range_one_fit = new TF1("range_one", "pol1", 35000, 50000);
-    total_distribution_invt->Fit(range_one_fit, "R");
+    TF1 *range_one_fit = new TF1("range_one", "pol1", 35000 / scale_factor, 50000 / scale_factor);
+    total_distribution_invt->Fit(range_one_fit, "RQ");
     range_one_fit->SetLineColor(kRed);
 
-    TF1 *range_two_fit = new TF1("range_two", "pol1", 20000, 26000);
-    total_distribution_invt->Fit(range_two_fit, "R");
+    TF1 *range_two_fit = new TF1("range_two", "pol1", 20000 / scale_factor, 26000 / scale_factor);
+    total_distribution_invt->Fit(range_two_fit, "RQ");
     range_two_fit->SetLineColor(kGreen + 2);
 
-    TF1 *total_fit = new TF1("total_fit", "pol2", 20000, 55000);
-    total_distribution_invt->Fit(total_fit, "R");
+    TF1 *total_fit = new TF1("total_fit", "pol2", 20000 / scale_factor, 55000 / scale_factor);
+    total_distribution_invt->Fit(total_fit, "RQ");
     total_fit->SetLineColor(kMagenta);
 
 
@@ -402,7 +404,7 @@ void tot_calibration() {
         TFile *tot_widths = TFile::Open("output/tot_widths.root", "RECREATE");
         for (int run = 0; run < run_numbers.size(); run++) {
             TH1* tot_width = new TH1F(Form("run%d_tot_widths", run_numbers[run]), Form("Run %d ToT Widths;SiPM;Width (ADC counts)", run_numbers[run]), 16, 0, 16);
-            for (int sipm = 0; sipm < 16; sipm++) {
+            for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                 float mean = peak_mean[run][sipm];
                 float sigma = peak_sigma[run][sipm];
                 tot_width->SetBinContent(sipm + 1, mean);

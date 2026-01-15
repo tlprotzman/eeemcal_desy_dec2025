@@ -23,6 +23,7 @@
 #include <TLegend.h>
 #include <TGraphErrors.h>
 #include <TParameter.h>
+#include <TError.h>
 
 #include "common.C"
 
@@ -35,22 +36,22 @@ float tot_min_cut = 0;
 void energy_resolution() {
 
     gStyle->SetOptStat(0);
+    gErrorIgnoreLevel = kWarning;
+
     
-    std::vector<int> run_numbers = {316, 321, 326, 331, 336};
-    std::vector<float> energies  = {1.0, 2.0, 3.0, 4.0, 5.0};
-    run_numbers.clear();
-    energies.clear();
+    std::vector<int> run_numbers = {411, 558, 559, 560, 561, 412};
+    std::vector<float> energies  = {1.0, 2.0, 3.0, 4.0, 4.4, 5.0};
+    std::vector<bool> skip;
+    // run_numbers.clear();
+    // energies.clear();
     for (int r = 316; r <= 338; r++) {
-        // if (r == 318 || r == 319) {
-        //     continue;
-        // }
         run_numbers.push_back(r);
         energies.push_back(1. + 0.2 * (r - 316));
-        // if (r == 316) {
-        //     r += 5;
-        // }
     }
-
+    for (int i = 0; i < run_numbers.size(); i++) {
+        skip.push_back(false);
+    }
+        
     float adc_calib = 0;
     bool values_set = true;
     TFile *adc_calib_file = TFile::Open("output/adc_to_gev_calibration.root", "READ");
@@ -168,9 +169,7 @@ void energy_resolution() {
         // Process data file
         int run_number = run_numbers[run];
         float energy = energies[run];
-        char file_path[256];
-        sprintf(file_path, "/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number);
-        TFile* root_file = TFile::Open(file_path);
+        TFile* root_file = TFile::Open(Form("/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number));
         TTree* tree = (TTree*)root_file->Get("events");
         uint32_t adc[576][20];
         uint32_t tot[576][20];
@@ -219,7 +218,7 @@ void energy_resolution() {
                     continue;
                 }
                 float crystal_signal = 0.0f;
-                for (int sipm = 0; sipm < 16; sipm++) {
+                for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                     int channel = mapping[crystal][sipm];
                     float gain = gain_factor->GetBinContent(crystal * 16 + sipm + 1);
                     float channel_signal = calculate_signal(adc[channel], gain);
@@ -236,11 +235,12 @@ void energy_resolution() {
             }
 
             // Get the center
-            float center_signal = 0;
+            float center_tot_signal = 0;
+            float center_adc_signal = 0;
             bool center_is_tot = false;
             bool mixed_event = false;
             int num_tot = 0;
-            for (int sipm = 0; sipm < 16; sipm++) {
+            for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                 float signal = 0;
                 int channel = mapping[12][sipm];
                 float gain = gain_factor->GetBinContent(12 * 16 + sipm + 1);
@@ -256,12 +256,16 @@ void energy_resolution() {
                     if (signal < channel_mean - (2 * channel_sigma) || signal > channel_mean + (2 * channel_sigma)) {
                         mixed_event = true;
                         // break;
-                        continue;
+                        // continue;
                     }
                 }
 
                 center_is_tot |= tot_sig;
-                center_signal += signal;
+                if (!tot_sig) {
+                    center_adc_signal += signal;
+                } else {
+                    center_tot_signal += signal;
+                }
             }
 
             tot_fraction_vec[run]->Fill(num_tot);
@@ -269,9 +273,9 @@ void energy_resolution() {
             if (false && num_tot == 8 && events_displayed < 10) {
                 events_displayed++;
                 std::vector<TH2*> sipm_waveforms;
-                for (int sipm = 0; sipm < 16; sipm++) {
-                    sipm_waveforms.push_back(new TH2F(Form("run%d_event%d_sipm%d_waveform", run_number, entry, sipm),
-                                                     Form("Run %d Event %d SiPM %d Waveform;Time Bin;ADC Signal", run_number, entry, sipm),
+                for (int sipm = 0; sipm < sipms_to_use; sipm++) {
+                    sipm_waveforms.push_back(new TH2F(Form("run%d_event%lld_sipm%d_waveform", run_number, entry, sipm),
+                                                     Form("Run %d Event %lld SiPM %d Waveform;Time Bin;ADC Signal", run_number, entry, sipm),
                                                      20, 0, 20, 1024, 0, 1024));
                     int channel = mapping[12][sipm];
                     for (int t = 0; t < 20; t++) {
@@ -290,27 +294,31 @@ void energy_resolution() {
                 }
                 TCanvas* c1 = new TCanvas("c1", "c1", 1200, 800);
                 c1->Divide(4, 4);
-                for (int sipm = 0; sipm < 16; sipm++) {
+                for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                     c1->cd(sipm + 1);
                     sipm_waveforms[sipm]->Draw("COLZ");
                 }
-                c1->SaveAs(Form("output/run%d_event%d_center_tot_waveforms.png", run_number, entry));
+                c1->SaveAs(Form("output/run%d_event%lld_center_tot_waveforms.png", run_number, entry));
                 c1->Close();
-                for (int sipm = 0; sipm < 16; sipm++) {
+                for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                     delete sipm_waveforms[sipm];
                 }
             }
 
 
-            if (num_tot > 0 && num_tot < 16) {
+            if (num_tot > 0 && num_tot < sipms_to_use) {
                 mixed_event = true;
             }
 
-            if (energy >= 1.9 && num_tot == 0) {
-                continue;
-            }
+            // if ((run_number == 317) && num_tot != 0) {
+            //     continue;
+            // }
 
-            if (mixed_event) {
+            // if (energy >= 1.3 && num_tot == 0) {
+            //     continue;
+            // }
+
+            if (mixed_event && (energy < 1.2 || energy > 2.0)) {
                 continue;
             }
 
@@ -321,22 +329,44 @@ void energy_resolution() {
                 signals[i] /= adc_calib;
             }
             
-            if (center_is_tot) {
+            if (!mixed_event && center_is_tot) {
                 // Convert the ToT to energy - these are _incredibly_ rough
                 float center_energy = 0;
-                float poly_energy = c0 + c1 * center_signal + c2 * center_signal * center_signal;
-                float lin_energy = a0 + a1 * center_signal;
+                float poly_energy = c0 + c1 * center_tot_signal + c2 * center_tot_signal * center_tot_signal;
+                float lin_energy = a0 + a1 * center_tot_signal;
                 if (lin_energy > poly_energy) {
                     center_energy = lin_energy;
                 } else {
                     center_energy = poly_energy;
                 }
                 signals[12] = center_energy;
-            } else {
+            } else if (!mixed_event && !center_is_tot) {
                 // std::cout << "center is not tot!" << std::endl;
-                signals[12] = center_signal * crystal_gain_factor->GetBinContent(13);
+                signals[12] = center_adc_signal * crystal_gain_factor->GetBinContent(13);
                 signals[12] /= adc_calib;
                 // std::cout << "center energy: " << signals[12] << std::endl;
+            } else {
+                // Scale the ADC to be equivalent to a full event
+                center_adc_signal /= (sipms_to_use - num_tot) / (float)sipms_to_use;
+                // Convert to GeV
+                center_adc_signal *= crystal_gain_factor->GetBinContent(13) / adc_calib;
+                // Scale back to just that number of SiPMs
+                center_adc_signal *= (sipms_to_use - num_tot) / (float)sipms_to_use;
+
+                // Do the same for the ToT
+                center_tot_signal /= num_tot / (float)sipms_to_use;
+                float poly_energy = c0 + c1 * center_tot_signal + c2 * center_tot_signal * center_tot_signal;
+                float lin_energy = a0 + a1 * center_tot_signal;
+                if (lin_energy > poly_energy) {
+                    center_tot_signal = lin_energy;
+                } else {
+                    center_tot_signal = poly_energy;
+                }
+                center_tot_signal *= num_tot / (float)sipms_to_use;
+
+                // Total signal is the sum of the two
+                signals[12] = center_adc_signal + center_tot_signal;
+                // std::cout << "Mixed event.  ADC: " << center_adc_signal << ", ToT: " << center_tot_signal << ", Total: " << signals[12] << std::endl;
             }
 
             float x_cog, y_cog;
@@ -354,7 +384,7 @@ void energy_resolution() {
                 int idx = center_nine_indexes[i];
                 central_nine_signal += signals[idx];
             }
-            for (int i = 0; i < 16; i++) {
+            for (int i = 0; i < sipms_to_use; i++) {
                 int idx = remaining_indexes[i];
                 total_signal += signals[idx];
             }
@@ -378,10 +408,13 @@ void energy_resolution() {
             }
             
         }
-        std::cout << "\nUsed " << events_used << " events" << std::endl;
-        fit_peak(central_crystal_energy_vec[run]);
-        fit_peak(central_nine_energy_vec[run]);
-        fit_peak(total_energy_vec[run]);
+        std::cout << "Used " << events_used << " events                          " << std::endl;
+        skip[run] = skip[run] | fit_peak(central_crystal_energy_vec[run]);
+        skip[run] = skip[run] | fit_peak(central_nine_energy_vec[run]);
+        skip[run] = skip[run] | fit_peak(total_energy_vec[run]);
+        if (skip[run]) {
+            std::cout << "Fit failed for run " << run_number << std::endl;
+        }
     }
 
 
@@ -394,9 +427,9 @@ void energy_resolution() {
     };
 
     TH1 *dummy = new TH1F("energy_resolution_center", "Energy Resolution;Energy (GeV);#sigma(E)/E", 1, 0, 6);
-    TGraphErrors *res_center = new TGraphErrors(run_numbers.size()-2);
-    TGraphErrors *res_middle = new TGraphErrors(run_numbers.size()-2);
-    TGraphErrors *res_all    = new TGraphErrors(run_numbers.size()-2);
+    TGraphErrors *res_center = new TGraphErrors(run_numbers.size());
+    TGraphErrors *res_middle = new TGraphErrors(run_numbers.size());
+    TGraphErrors *res_all    = new TGraphErrors(run_numbers.size());
     res_center->SetMarkerColor(kRed);
     res_center->SetLineColor(kRed);
     res_center->SetLineStyle(kDashed);
@@ -417,7 +450,11 @@ void energy_resolution() {
 
     int point = 0;
     for (int run = 0; run < run_numbers.size(); run++) {
-        if (run_numbers[run] == 318 || run_numbers[run] == 319) {
+        // if (run_numbers[run] == 318 || run_numbers[run] == 319) {
+        //     continue;
+        // }
+        if (skip[run]) {
+            std::cout << "Skipping run " << run_numbers[run] << " due to failed fit." << std::endl;
             continue;
         }
         // std::cout << "a run " << run_numbers[run] << std::endl;
@@ -459,9 +496,9 @@ void energy_resolution() {
     dummy->Draw();
     dummy->SetMinimum(0);
     dummy->SetMaximum(10);
-    res_center->Draw("same lp");
-    res_middle->Draw("same lp");
-    res_all->Draw("same lp");
+    res_center->Draw("same p");
+    res_middle->Draw("same p");
+    res_all->Draw("same p");
 
     TLegend *l = new TLegend(0.6, 0.6, 0.89, 0.89);
     l->SetLineWidth(0);
@@ -472,9 +509,18 @@ void energy_resolution() {
 
     TF1 *fit_func = new TF1("energy_res_fit", "sqrt([0]*[0] + [1]*[1]/x + [2]*[2]/(x*x))", 1, 5.4);
     fit_func->SetParameter(0, 2);
-    fit_func->SetParameter(1, 2);
+    fit_func->SetParameter(4, 2);
     fit_func->SetParameter(2, 4);
-    res_all->Fit(fit_func, "R");
+    fit_func->SetParNames("A", "B", "C");
+    fit_func->SetParLimits(0, 0.5, 10);
+    fit_func->SetParLimits(1, 0.5, 10);
+    fit_func->SetParLimits(2, 0.5, 10);
+    auto fit_middle = (TF1*)fit_func->Clone("energy_res_fit_middle");
+    res_middle->Fit(fit_middle, "RQME");
+    fit_middle->SetLineColor(kBlue);
+    fit_middle->Draw("same");
+    res_all->Fit(fit_func, "RQME");
+    fit_func->SetLineColor(kMagenta);
     fit_func->Draw("same");
 
     auto text = new TLatex();
@@ -482,9 +528,15 @@ void energy_resolution() {
     text->SetTextSize(0.03);
     text->SetTextColor(kBlack);
     text->DrawLatex(0.15, 0.30, "#sigma/E = A #oplus B/#sqrt{E} #oplus C/E");
-    text->DrawLatex(0.15, 0.25, Form("A: %.2f#pm%.2f %%", fit_func->GetParameter(0), fit_func->GetParError(0)));
-    text->DrawLatex(0.15, 0.20, Form("B: %.2f#pm%.2f %%", fit_func->GetParameter(1), fit_func->GetParError(1)));
-    text->DrawLatex(0.15, 0.15, Form("C: %.2f#pm%.2f %%", fit_func->GetParameter(2), fit_func->GetParError(2)));
+    text->DrawLatex(0.15, 0.26, "All Crystals");
+    text->DrawLatex(0.15, 0.22, Form("A: %.2f#pm%.2f %%", fit_func->GetParameter(0), fit_func->GetParError(0)));
+    text->DrawLatex(0.15, 0.18, Form("B: %.2f#pm%.2f %%", fit_func->GetParameter(1), fit_func->GetParError(1)));
+    text->DrawLatex(0.15, 0.14, Form("C: %.2f#pm%.2f %%", fit_func->GetParameter(2), fit_func->GetParError(2)));
+
+    text->DrawLatex(0.36, 0.26, "Central 9 Crystals");
+    text->DrawLatex(0.36, 0.22, Form("A: %.2f#pm%.2f %%", fit_middle->GetParameter(0), fit_middle->GetParError(0)));
+    text->DrawLatex(0.36, 0.18, Form("B: %.2f#pm%.2f %%", fit_middle->GetParameter(1), fit_middle->GetParError(1)));
+    text->DrawLatex(0.36, 0.14, Form("C: %.2f#pm%.2f %%", fit_middle->GetParameter(2), fit_middle->GetParError(2)));
 
     
     canvas->SaveAs("output/energy_resolution.pdf(");
@@ -536,9 +588,9 @@ void energy_resolution() {
     point = 0;
     for (int i = 0; i < run_numbers.size(); i++) {
         // std::cout << "b run " << run_numbers[i] << std::endl;
-        if (run_numbers[i] == 318 || run_numbers[i] == 319) {
-            continue;
-        }
+        // if (run_numbers[i] == 318 || run_numbers[i] == 319) {
+        //     continue;
+        // }
 
         float beam_energy = energies[i];
         float peak_energy = total_energy_vec[i]->GetFunction("final_fit")->GetParameter(1);
@@ -565,21 +617,27 @@ void energy_resolution() {
 
         canvas->SetRightMargin(0.05);
         central_crystal_energy_vec[run]->Draw("HIST e");
-        auto fit = central_crystal_energy_vec[run]->GetFunction("final_fit");
-        fit->Draw("same");
-        draw_text(fit, run_number, energy);
+        if (!skip[run]) {
+            auto fit = central_crystal_energy_vec[run]->GetFunction("final_fit");
+            fit->Draw("same");
+            draw_text(fit, run_number, energy);
+        }
         canvas->SaveAs("output/energy_resolution.pdf");
 
         central_nine_energy_vec[run]->Draw("HIST e");
-        fit = central_nine_energy_vec[run]->GetFunction("final_fit");
-        fit->Draw("same");
-        draw_text(fit, run_number, energy);
+        if (!skip[run]) {
+            auto fit = central_nine_energy_vec[run]->GetFunction("final_fit");
+            fit->Draw("same");
+            draw_text(fit, run_number, energy);
+        }
         canvas->SaveAs("output/energy_resolution.pdf");
 
         total_energy_vec[run]->Draw("HIST e");
-        fit = total_energy_vec[run]->GetFunction("final_fit");
-        fit->Draw("same");
-        draw_text(fit, run_number, energy);
+        if (!skip[run]) {
+            auto fit = total_energy_vec[run]->GetFunction("final_fit");
+            fit->Draw("same");
+            draw_text(fit, run_number, energy);
+        }
         canvas->SaveAs("output/energy_resolution.pdf");
 
         canvas->Clear();

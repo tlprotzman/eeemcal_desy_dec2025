@@ -21,6 +21,7 @@
 #include <TTree.h>
 #include <TProfile.h>
 #include <TParameter.h>
+#include <TError.h>
 
 #include "common.C"
 
@@ -34,6 +35,8 @@ float beam_energy = 1;
 
 void adc_calibration() {
     gStyle->SetOptStat(0);
+    gErrorIgnoreLevel = kWarning;
+
     float energy = 1;
 
     int central_crystal_index = 12;
@@ -49,14 +52,14 @@ void adc_calibration() {
     TH1 *toa_sample = new TH1F("toa_sample", "ToA Sample Distribution;Sample;Events", 20, 0, 20);
     
     std::vector<TH2*> E_vs_toa;
-    for (int sipm = 0; sipm < 16; sipm++) {
+    for (int sipm = 0; sipm < sipms_to_use; sipm++) {
         E_vs_toa.push_back(new TH2F(Form("E_vs_toa_sipm_%d", sipm), Form("SiPM %d Energy vs ToA;ToA;Energy (ADC)", sipm), 1024, 0, 1024, 500, 0, 3000));
     }   
     
     std::vector<std::vector<TH2*>> toa_correlations;
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < sipms_to_use; i++) {
         toa_correlations.push_back(std::vector<TH2*>());
-        for (int j = 0; j < 16; j++) {
+        for (int j = 0; j < sipms_to_use; j++) {
             toa_correlations[i].push_back(new TH2F(Form("toa_correlation_sipm_%02d_sipm_%02d", i, j),
                                                   Form("SiPM %02d vs SiPM %02d ToA;SiPM %02d ToA;SiPM %02d ToA", i, j, i, j),
                                                   1024, 0, 1024, 1024, 0, 1024));
@@ -67,7 +70,7 @@ void adc_calibration() {
     std::vector<TH1*> crystal_energy;
     std::vector<TH1*> crystal_energy_shares;
     for (int i = 0; i < 25; i++) {
-        for (int j = 0; j < 16; j++) {
+        for (int j = 0; j < sipms_to_use; j++) {
             sipm_energy.push_back(std::vector<TH1*>());
             sipm_energy[i].push_back(new TH1F(Form("crystal_%02d_sipm_%02d_energy", i, j), Form("Crystal %02d SiPM %02d Energy;Energy (ADC);Events", i, j), 500, 0, 4000));
         }   
@@ -102,9 +105,7 @@ void adc_calibration() {
 
 
     // Process data file
-    char file_path[256];
-    sprintf(file_path, "/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number);
-    TFile* root_file = TFile::Open(file_path);
+    TFile* root_file = TFile::Open(Form("/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number));
     TTree* tree = (TTree*)root_file->Get("events");
     uint32_t adc[576][20];
     uint32_t tot[576][20];
@@ -143,7 +144,7 @@ void adc_calibration() {
                 continue;
             }
             float crystal_signal = 0.0f;
-            for (int sipm = 0; sipm < 16; sipm++) {
+            for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                 int channel = mapping[crystal][sipm];
                 float gain = gain_factor->GetBinContent(crystal * 16 + sipm + 1);
                 float channel_signal = calculate_signal(adc[channel], gain);
@@ -163,7 +164,7 @@ void adc_calibration() {
                         }
                         toa_sample->Fill(timebin);
                         E_vs_toa[sipm]->Fill(this_toa, channel_signal);
-                        for (int other_sipm = 0; other_sipm < 16; other_sipm++) {
+                        for (int other_sipm = 0; other_sipm < sipms_to_use; other_sipm++) {
                             if (other_sipm == sipm) {
                                 continue;
                             }
@@ -204,7 +205,7 @@ void adc_calibration() {
             int idx = center_nine_indexes[i];
             central_nine_signal += signals[idx];
         }
-        for (int i = 0; i < 16; i++) {
+        for (int i = 0; i < sipms_to_use; i++) {
             int idx = remaining_indexes[i];
             total_signal += signals[idx];
         }
@@ -344,7 +345,7 @@ void adc_calibration() {
     for (int i = 0; i < 25; i++) {
         canvas->Clear();
         canvas->Divide(4, 4);
-        for (int j = 0; j < 16; j++) {
+        for (int j = 0; j < sipms_to_use; j++) {
             canvas->cd(j + 1);
             sipm_energy[i][j]->Draw("HIST e");
             // canvas->GetXaxis()->SetMinimum(1);
@@ -366,7 +367,7 @@ void adc_calibration() {
     auto text = new TLatex();
     text->SetNDC();
     text->SetTextSize(0.04);
-    for (int sipm = 0; sipm < 16; sipm++) {
+    for (int sipm = 0; sipm < sipms_to_use; sipm++) {
         canvas->cd(sipm + 1);
         // auto fit = new TF1(Form("toa_fit_sipm_%d", sipm), "pol1", 0, 1024);
         E_vs_toa[sipm]->Draw("COLZ");
@@ -382,8 +383,8 @@ void adc_calibration() {
 
     auto canvas2 = new TCanvas("toa_correlations", "", 8000, 8000);
     canvas2->Divide(16, 16, 0.0005, 0.0005);
-    for (int i = 0; i < 16; i++) {
-        for (int j = 0; j < 16; j++) {
+    for (int i = 0; i < sipms_to_use; i++) {
+        for (int j = 0; j < sipms_to_use; j++) {
             if (j <= i) {
                 canvas2->cd(i * 16 + j + 1);
                 toa_correlations[i][j]->Draw("COLZ");

@@ -21,8 +21,13 @@
 #include <TTree.h>
 #include <TGraph.h>
 #include <TLegend.h>
+#include <TFitResult.h>
+#include <TFitResultPtr.h>
+#include <TError.h>
 
 float sigma_cut = 2;
+
+int sipms_to_use = 16;
 
 float center_x = 1.95396;
 float sigma_x = 0.184758 * sigma_cut;
@@ -102,12 +107,61 @@ float calculate_signal_v3(uint32_t *adc_values, float gain) {
     return signal * gain;
 }
 
+float calculate_signal_v4(uint32_t *adc_values, float gain) {
+    // Pedestal is the mean of the first three samples
+    float pedestal = (adc_values[0] + adc_values[1] + adc_values[2]) / 3.0f;
+
+    // Signal is the sum of samples 5, 6, and 7
+    float signal = adc_values[6] + adc_values[7] - 2 * pedestal;
+    if (signal < 0) {
+        signal = 0;
+    }
+    // for (int i = 5; i <= 10; ++i) {
+    //     float sample = adc_values[i] - pedestal;
+    //     if (sample > 0) {
+    //         signal += sample;
+    //     }
+    // }
+    return signal * gain;
+}
+
+float calculate_signal_v5(uint32_t *adc_values, float gain) {
+    // Pedestal is the mean of the first three samples
+    float pedestal = (adc_values[0] + adc_values[1] + adc_values[2]) / 3.0f;
+
+    // Find the sample with the maximum adc
+    float max_sample = 0.0f;
+    int index = 0;
+    for (int i = 3; i < 20; ++i) {
+        float sample = adc_values[i] - pedestal;
+        if (sample > max_sample) {
+            max_sample = sample;
+            index = i;
+        }
+    }
+    if (index < 5 || index > 10) {
+        return 0;
+    }
+    float signal = adc_values[index] + adc_values[index + 1] + adc_values[index + 2] - (3 * pedestal);
+    // float signal = max_sample;
+    if (signal < 0) {
+        signal = 0;
+    }
+    return max_sample * gain;
+}
+
 float calculate_signal(uint32_t *adc_values, float gain) {
     if (signal_method == 2) {
         return calculate_signal_v2(adc_values, gain);
-    }
-    else if (signal_method == 3) {
+    } else if (signal_method == 3) {
         return calculate_signal_v3(adc_values, gain);
+    } else if (signal_method == 4) {
+        return calculate_signal_v4(adc_values, gain);
+    } else if (signal_method == 5) {
+        return calculate_signal_v5(adc_values, gain);
+    } else {
+        // Default to v2
+        return calculate_signal_v2(adc_values, gain);
     }
 }
 
@@ -121,7 +175,7 @@ bool calculate_signal(uint32_t *adc_values, uint32_t *tot_values, float gain, fl
                 break;
             }
         }
-        // If there is no ToT value, return the single SiPM ADC signal
+        // If there is no ToT value
         if (tot == 0) {
             signal = calculate_signal(adc_values, gain);
             return false;
@@ -140,9 +194,41 @@ bool calculate_signal(uint32_t *adc_values, uint32_t *tot_values, float gain, fl
                 break;
             }
         }
-        // If there is no ToT value, return the single SiPM ADC signal
+        // If there is no ToT value
         if (tot == 0) {
             signal = calculate_signal_v3(adc_values, gain);
+            return false;
+        }
+        signal = tot;
+        return true;
+    } else if (signal_method == 4) {
+        // Check if there is a ToT value
+        uint32_t tot = 0;
+        for (int i = 0; i < 20; ++i) {
+            if (tot_values[i] > 0) {
+                tot = tot_values[i];
+                break;
+            }
+        }
+        // If there is no ToT value
+        if (tot == 0) {
+            signal = calculate_signal_v4(adc_values, gain);
+            return false;
+        }
+        signal = tot;
+        return true;
+    } else if (signal_method == 5) {
+        // Check if there is a ToT value
+        uint32_t tot = 0;
+        for (int i = 0; i < 20; ++i) {
+            if (tot_values[i] > 0) {
+                tot = tot_values[i];
+                break;
+            }
+        }
+        // If there is no ToT value
+        if (tot == 0) {
+            signal = calculate_signal_v5(adc_values, gain);
             return false;
         }
         signal = tot;
@@ -174,27 +260,46 @@ int32_t get_toa(uint32_t *toa_values) {
     return -1;
 }
 
-void fit_peak(TH1* hist) {
+bool fit_peak(TH1* hist) {
+    float lower_bound = hist->GetXaxis()->GetXmin();
+    float upper_bound = hist->GetXaxis()->GetXmax();
     float mean = hist->GetMean();
+    // Check that the mean is within the histogram range
     float rms = hist->GetRMS();
     float fit_min = mean - 1.5 * rms;
     float fit_max = mean + 1.5 * rms;
     TF1* rough_fit = new TF1("rough_fit", "gaus", fit_min, fit_max);
-    hist->Fit(rough_fit, "RQ");
+    // std::cout << "fit 1 range: " << fit_min << " to " << fit_max << std::endl;
+    auto result = hist->Fit(rough_fit, "RQS");
+    if (result->Status() != 0 || rough_fit->GetParameter(1) < lower_bound || rough_fit->GetParameter(1) > upper_bound) {
+        std::cout << "failed!" << std::endl;
+        return true;
+    }
     float peak = rough_fit->GetParameter(1);
     float sigma = rough_fit->GetParameter(2);
     rough_fit->SetLineColor(kBlue);
     rough_fit->SetLineStyle(2);
 
     TF1* second_fit = new TF1("second_fit", "gaus", peak - sigma, peak + sigma);
-    hist->Fit(second_fit, "RQ");
+    // std::cout << "fit 2 range: " << peak - sigma << " to " << peak + sigma << std::endl;
+    result = hist->Fit(second_fit, "RQS");
+    if (result->Status() != 0 || second_fit->GetParameter(1) < lower_bound || second_fit->GetParameter(1) > upper_bound) {
+        std::cout << "failed!" << std::endl;
+        return true;
+    }
     peak = second_fit->GetParameter(1);
     sigma = second_fit->GetParameter(2);
 
     // TF1* final_fit = new TF1("final_fit", "crystalball", peak - sigma, peak + sigma);
     // final_fit->SetParameters(second_fit->GetParameter(0), peak, sigma, 1.5, 2.0);
     TF1* final_fit = new TF1("final_fit", "gaus", peak - sigma, peak + sigma);
-    hist->Fit(final_fit, "R");
+    // std::cout << "fit 3 range: " << peak - sigma << " to " << peak + sigma << std::endl;
+    result = hist->Fit(final_fit, "RQS");
+    if (result->Status() != 0 || final_fit->GetParameter(1) < lower_bound || final_fit->GetParameter(1) > upper_bound) {
+        std::cout << "failed!" << std::endl;
+        return true;
+    }
+    return false;
 }
 
 void draw_text(TF1* fit, int run_number, float beam_energy) {
