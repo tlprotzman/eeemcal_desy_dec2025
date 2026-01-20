@@ -25,9 +25,9 @@
 
 #include "common.C"
 
-float energy_fraction_cut = 0.3;
+float energy_fraction_cut = 0.0;
 long n_events = 1000000;
-// n_events = 10000;
+// n_events = 1000;
 
 int run_number = 411;
 float beam_energy = 1;
@@ -42,6 +42,17 @@ void adc_calibration() {
     int central_crystal_index = 12;
     int center_nine_indexes[8] = {7, 8, 9, 11, 13, 17, 18, 19};
     int remaining_indexes[16] = {0, 1, 2, 3, 4, 5, 6, 10, 11, 15, 16, 20, 21, 22, 23, 24};
+    int common_mode_channel[25] = {224, 296, 188, 386, 152,
+                                   512, 548, 242, 134, 404,
+                                   206, 368, 332, 458,   8,
+                                   440, 116, 350,  62,  98,
+                                   422, 170, 260, 314, 278};
+    /*
+    a - 8
+    b - 26
+    c - 62
+    d - 44
+    */
 
 
     TH1* central_crystal_energy = new TH1F("central_crystal_energy", "Central Crystal Energy;Energy (`);Events", 500, 0, 75000);
@@ -50,6 +61,10 @@ void adc_calibration() {
     TH2* cog_distribution       = new TH2F("cog_distribution", "Center of Gravity Distribution;X (# Crystals);Y (# Crystals)", 100, -0.5, 4.5, 100, -0.5, 4.5);
     TH1 *toa_distribution        = new TH1F("toa_distribution", "ToA Distribution;ToA;Events", 1024, 0, 1024);
     TH1 *toa_sample = new TH1F("toa_sample", "ToA Sample Distribution;Sample;Events", 20, 0, 20);
+    
+    TH1 *max_sample_index = new TH1F("max_sample_index", "Max Sample Index Distribution;Sample Index;Events", 20, 0, 20);
+    TH1 *second_max_sample_index = new TH1F("second_max_sample_index", "Second Max Sample Index Distribution;Sample Index;Events", 20, 0, 20);
+    TH1 *third_max_sample_index = new TH1F("third_max_sample_index", "Third Max Sample Index Distribution;Sample Index;Events", 20, 0, 20);
     
     std::vector<TH2*> E_vs_toa;
     for (int sipm = 0; sipm < sipms_to_use; sipm++) {
@@ -67,15 +82,20 @@ void adc_calibration() {
     }
 
     std::vector<std::vector<TH1*>> sipm_energy;
+    std::vector<std::vector<TH2*>> sipm_waveform;
     std::vector<TH1*> crystal_energy;
     std::vector<TH1*> crystal_energy_shares;
+    std::vector<TH2*> crystal_common_mode;
     for (int i = 0; i < 25; i++) {
         for (int j = 0; j < sipms_to_use; j++) {
             sipm_energy.push_back(std::vector<TH1*>());
             sipm_energy[i].push_back(new TH1F(Form("crystal_%02d_sipm_%02d_energy", i, j), Form("Crystal %02d SiPM %02d Energy;Energy (ADC);Events", i, j), 500, 0, 4000));
+            sipm_waveform.push_back(std::vector<TH2*>());
+            sipm_waveform[i].push_back(new TH2F(Form("crystal_%02d_sipm_%02d_waveform", i, j), Form("Crystal %02d SiPM %02d Waveform;Sample;ADC", i, j), 20, 0, 20, 1024, 0, 1024));
         }   
         crystal_energy.push_back(new TH1F(Form("crystal_%02d_energy", i), Form("Crystal %02d Energy;Energy (ADC);Events", i), 500, 0, 40000));
         crystal_energy_shares.push_back(new TH1F(Form("crystal_%02d_energy_share", i), Form("Crystal %02d Energy Share;Energy Share;Events", i), 10000, 0, 1));
+        crystal_common_mode.push_back(new TH2F(Form("crystal_%02d_common_mode", i), Form("Crystal %02d Common Mode;Sample;ADC", i), 20, 0, 20, 1024, 0, 1024));
     }
 
     TH2* pedestals = new TH2F("pedestals", "Pedestals;Channel;Pedestal (ADC)", 72*8, 0, 72*8, 1024, 0, 1024);
@@ -135,6 +155,21 @@ void adc_calibration() {
         float central_nine_signal = 0.0f;
         float total_signal = 0.0f;
         bool is_tot_event = false;
+        uint32_t central_toa = 0;
+        int index = mapping[12][0]; // Central crystal, first SiPM for event ToA selection
+        bool outside_toa_range = false;
+        for (int i = 0; i < 20; i++) {
+            if (toa[index][i]) {
+                central_toa = toa[index][i];
+                if (central_toa < 200 || central_toa > 800) {
+                    outside_toa_range = true;
+                    break;
+                }
+            }
+        }
+        if (outside_toa_range) {
+            // continue;
+        }
 
         float signals[25];
         for (int crystal = 0; crystal < 25; crystal++) {
@@ -144,12 +179,54 @@ void adc_calibration() {
                 continue;
             }
             float crystal_signal = 0.0f;
+            for (int i = 0; i < 20; i++) {
+                int channel = common_mode_channel[crystal];
+                crystal_common_mode[crystal]->Fill(i, adc[channel][i]);
+            }
+
             for (int sipm = 0; sipm < sipms_to_use; sipm++) {
                 int channel = mapping[crystal][sipm];
                 float gain = gain_factor->GetBinContent(crystal * 16 + sipm + 1);
                 float channel_signal = calculate_signal(adc[channel], gain);
+                // float channel_signal = calculate_signal_v6(adc[channel], adc[common_mode_channel[crystal]], gain);
                 sipm_energy[crystal][sipm]->Fill(channel_signal);
-                pedestals->Fill(channel, (adc[channel][0] + adc[channel][1] + adc[channel][2]) / 3.0f);
+                int i1, i2, i3 = -1;
+                float pedestal = (adc[channel][0] + adc[channel][1] + adc[channel][2]) / 3.0f;
+                float max1 = 0.0f, max2 = 0.0f, max3 = 0.0f;
+                
+                for (int i = 0; i < 20; ++i) {
+                    sipm_waveform[crystal][sipm]->Fill(i, adc[channel][i]);
+                    // if (i < 5) continue; // Skip pedestal samples
+                    // if (i >= 10) continue;
+                    float sample = adc[channel][i] - pedestal;
+                    if (sample > max1) {
+                        i3 = i2;
+                        i2 = i1;
+                        i1 = i;
+                        max3 = max2;
+                        max2 = max1;
+                        max1 = sample;
+                    } else if (sample > max2) {
+                        i3 = i2;
+                        i2 = i;
+                        max3 = max2;
+                        max2 = sample;
+                    } else if (sample > max3) {
+                        i3 = i;
+                        max3 = sample;
+                    }
+                }
+                max_sample_index->Fill(i1);
+                second_max_sample_index->Fill(i2);
+                third_max_sample_index->Fill(i3);
+
+
+
+
+                // pedestals->Fill(channel, (adc[channel][0] + adc[channel][1] + adc[channel][2]) / 3.0f);
+                pedestals->Fill(channel,(adc[channel][0]));
+                pedestals->Fill(channel,(adc[channel][1]));
+                pedestals->Fill(channel,(adc[channel][2]));
                 crystal_signal += channel_signal;
                 uint32_t this_toa = get_toa(toa[channel]);
                 if (this_toa >= 0) {
@@ -227,9 +304,9 @@ void adc_calibration() {
 
     }
 
-    fit_peak(central_crystal_energy);
-    fit_peak(central_nine_energy);
-    fit_peak(total_energy);
+    // fit_peak(central_crystal_energy);
+    // fit_peak(central_nine_energy);
+    // fit_peak(total_energy);
 
 
     int crystal_mapping[25] = {
@@ -243,21 +320,21 @@ void adc_calibration() {
     TCanvas* canvas = new TCanvas("gain_matching", "", 800, 600);
     canvas->SetRightMargin(0.05);
     central_crystal_energy->Draw("HIST e");
-    auto fit = central_crystal_energy->GetFunction("final_fit");
-    fit->Draw("same");
-    draw_text(fit, run_number, beam_energy);
+    // auto fit = central_crystal_energy->GetFunction("final_fit");
+    // fit->Draw("same");
+    // draw_text(fit, run_number, beam_energy);
     canvas->SaveAs("output/adc_calibration.pdf(");
 
     central_nine_energy->Draw("HIST e");
-    fit = central_nine_energy->GetFunction("final_fit");
-    fit->Draw("same");
-    draw_text(fit, run_number, beam_energy);
+    // fit = central_nine_energy->GetFunction("final_fit");
+    // fit->Draw("same");
+    // draw_text(fit, run_number, beam_energy);
     canvas->SaveAs("output/adc_calibration.pdf");
 
     total_energy->Draw("HIST e");
-    fit = total_energy->GetFunction("final_fit");
-    fit->Draw("same");
-    draw_text(fit, run_number, beam_energy);
+    // fit = total_energy->GetFunction("final_fit");
+    // fit->Draw("same");
+    // draw_text(fit, run_number, beam_energy);
     canvas->SaveAs("output/adc_calibration.pdf");
 
 
@@ -294,8 +371,24 @@ void adc_calibration() {
     canvas->SaveAs("output/adc_calibration.pdf");
 
     canvas->Clear();
+    gPad->SetLogz(0);
     pedestals->Draw("COLZ");
+    pedestals->GetYaxis()->SetRangeUser(0, 200);
     canvas->SaveAs("output/adc_calibration.pdf");
+    canvas->Clear();
+    canvas->Divide(1, 1);
+    TH1F* pedestals_width = new TH1F("pedestals_width", "Pedestal Width vs Channel;Channel;Width (ADC)", 72*8, 0, 72*8);
+    for (int channel = 1; channel <= 72*8; channel++) {
+        TH1D *proj = pedestals->ProjectionY("_py", channel, channel);
+        if (proj && proj->GetEntries() > 0) {
+            std::cout << "Channel " << channel << " pedestal width: " << proj->GetStdDev() << std::endl; 
+            pedestals_width->SetBinContent(channel, proj->GetStdDev());
+        }
+    }
+    pedestals_width->Draw("P");
+    pedestals_width->GetYaxis()->SetRangeUser(0, 5);
+    canvas->SaveAs("output/adc_calibration.pdf");
+
 
     canvas->Clear();
     canvas->Divide(5, 5);
@@ -352,7 +445,20 @@ void adc_calibration() {
             // gPad->SetLogx();
         }
         canvas->SaveAs("output/adc_calibration.pdf");
+        canvas->Clear();
+        canvas->Divide(4, 4);
+        for (int j = 0; j < sipms_to_use; j++) {
+            canvas->cd(j + 1);
+            sipm_waveform[i][j]->Draw("COLZ");
+            gPad->SetLogz();
+        }
+        canvas->SaveAs("output/adc_calibration.pdf");
+        canvas->Clear();
+        crystal_common_mode[i]->Draw("COLZ");
+        gPad->SetLogz();
+        canvas->SaveAs("output/adc_calibration.pdf");
     }
+    gPad->SetLogz(0);
     
     canvas->Clear();
     toa_distribution->Draw("HIST");
@@ -393,6 +499,19 @@ void adc_calibration() {
         }
     }
     canvas2->SaveAs("output/adc_correlation.png");
+
+    canvas->Clear();
+    max_sample_index->Draw("HIST");
+    canvas->SaveAs("output/adc_calibration.pdf");
+
+    canvas->Clear();
+    second_max_sample_index->Draw("HIST");
+    canvas->SaveAs("output/adc_calibration.pdf");
+
+    canvas->Clear();
+    third_max_sample_index->Draw("HIST");
+    canvas->SaveAs("output/adc_calibration.pdf");
+
 
     canvas->Clear();
     canvas->SaveAs("output/adc_calibration.pdf)");

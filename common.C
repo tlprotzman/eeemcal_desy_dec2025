@@ -25,7 +25,7 @@
 #include <TFitResultPtr.h>
 #include <TError.h>
 
-float sigma_cut = 2;
+float sigma_cut = 200;
 
 int sipms_to_use = 16;
 
@@ -37,7 +37,7 @@ float sigma_y = 0.195137 * sigma_cut;
 // float adc_calib = 26704.4;  // 32444.1 Signal_ADC = 1 GeV 
 // float adc_calib = 57854.3;  // v3
 
-int signal_method = 2;
+int signal_method = 4;
 
 
 std::map<int, std::vector<int>> read_mapping(const std::string& filename) {
@@ -75,19 +75,30 @@ float calculate_signal_v2(uint32_t *adc_values, float gain) {
     float signal = 0.0f;
     float max1 = 0.0f, max2 = 0.0f, max3 = 0.0f;
     
-    for (int i = 3; i < 20; ++i) {
+    int i1, i2, i3 = -1;
+    for (int i = 5; i < 10; ++i) {
         float sample = adc_values[i] - pedestal;
+        if (sample < 0) {
+            continue;
+        }
         if (sample > max1) {
+            i3 = i2;
+            i2 = i1;
+            i1 = i;
             max3 = max2;
             max2 = max1;
             max1 = sample;
         } else if (sample > max2) {
+            i3 = i2;
+            i2 = i;
             max3 = max2;
             max2 = sample;
         } else if (sample > max3) {
+            i3 = i;
             max3 = sample;
         }
     }
+    // std::cout << "Max indices: " << i1 << ", " << i2 << ", " << i3 << std::endl;
     signal = max1 + max2 + max3;
     return signal * gain;
 }
@@ -98,7 +109,7 @@ float calculate_signal_v3(uint32_t *adc_values, float gain) {
 
     // Signal is the sum of all samples above pedestal
     float signal = 0.0f;
-    for (int i = 3; i < 20; ++i) {
+    for (int i = 6; i <= 12; ++i) {
         float sample = adc_values[i] - pedestal;
         if (sample > 0) {
             signal += sample;
@@ -111,12 +122,13 @@ float calculate_signal_v4(uint32_t *adc_values, float gain) {
     // Pedestal is the mean of the first three samples
     float pedestal = (adc_values[0] + adc_values[1] + adc_values[2]) / 3.0f;
 
-    // Signal is the sum of samples 5, 6, and 7
-    float signal = adc_values[6] + adc_values[7] - 2 * pedestal;
+
+    float signal = adc_values[6] - pedestal;
     if (signal < 0) {
         signal = 0;
     }
-    // for (int i = 5; i <= 10; ++i) {
+    // float signal = 0.0f;
+    // for (int i = 6; i <= 8; ++i) {
     //     float sample = adc_values[i] - pedestal;
     //     if (sample > 0) {
     //         signal += sample;
@@ -139,15 +151,132 @@ float calculate_signal_v5(uint32_t *adc_values, float gain) {
             index = i;
         }
     }
-    if (index < 5 || index > 10) {
-        return 0;
+    if (index < 5 || index > 16) {
+        index = 6;
     }
-    float signal = adc_values[index] + adc_values[index + 1] + adc_values[index + 2] - (3 * pedestal);
+    float signal = adc_values[index - 1] + adc_values[index] + adc_values[index + 1] + adc_values[index + 2] - (4 * pedestal);
     // float signal = max_sample;
+    if (signal < 4 * 4) {   // pedestal * samples
+        signal = 0;
+    }
+    return signal * gain;
+}
+
+float calculate_signal_v6(uint32_t *adc_values, uint32_t *common_mode, float gain) {
+    // Pedestal is the mean of the first three samples
+    float pedestal = (adc_values[0] + adc_values[1] + adc_values[2]) / 3.0f;
+    float common_mode_pedestal = (common_mode[0] + common_mode[1] + common_mode[2]) / 3.0f;
+
+    // Sum samples 6, 7 and 8 after common mode subtraction
+    // float sig_0 = adc_values[5] - pedestal;
+    // float comm_0 = common_mode[5] - common_mode_pedestal;
+
+    // float sig_a = adc_values[6] - pedestal;
+    // float comm_a = common_mode[6] - common_mode_pedestal;
+
+    // float sig_b = adc_values[7] - pedestal;
+    // float comm_b = common_mode[7] - common_mode_pedestal;
+
+    // float sig_c = adc_values[8] - pedestal;
+    // float comm_c = common_mode[8] - common_mode_pedestal;
+
+    // float sig_d = adc_values[9] - pedestal;
+    // float comm_d = common_mode[9] - common_mode_pedestal;
+
+    // float sig = sig_a + sig_b + sig_c + sig_0 + sig_d;
+    // float cm = comm_a + comm_b + comm_c + comm_0 + comm_d;
+    // if (cm > -12) {  // pedestal rms * samples
+    //     cm = 0;
+    // } else {
+    //     // std::cout << "Common mode avg: " << cm / 3.0f << std::endl;
+    // }
+    // sig -= cm;
+    float sig = 0.0f;
+    for (int i = 5; i <= 8; i++) {
+        float sample = adc_values[i] - pedestal;
+        float comm_sample = common_mode[i] - common_mode_pedestal;
+        float corrected_sample = sample - comm_sample;
+        if (corrected_sample > 0) {
+            sig += corrected_sample;
+        }
+    }
+
+    // Signal is the sum of the three greatest values after common mode subtraction
+    float signal = sig;
     if (signal < 0) {
         signal = 0;
     }
-    return max_sample * gain;
+
+    
+    return signal * gain;
+}
+
+double crystal_ball(double *inputs, double *par) {
+    // Parameters
+    // alpha: Where the gaussian transitions to the power law tail - fix?
+    // n: The exponent of the power law tail - fix?
+    // x_bar: The mean of the gaussian - free
+    // sigma: The width of the gaussian - fix ?
+    // N: The normalization of the gaussian - free
+    // B baseline - fix?
+
+    double x = inputs[0];
+
+    double alpha = par[0];
+    double n = par[1];
+    double x_bar = par[2];
+    double sigma = par[3];
+    double N = par[4];
+    double offset = par[5];
+    
+    double A = pow(n / fabs(alpha), n) * exp(-0.5 * alpha * alpha);
+    double B = n / fabs(alpha) - fabs(alpha);
+    // std::cout << "A: " << A << std::endl;
+
+    // std::cout << "alpha: " << alpha << " n: " << n << " x_bar: " << x_bar << " sigma: " << sigma << " N: " << N << " B: " << B << " A: " << A << std::endl;
+
+    double ret_val;
+    if ((x - x_bar) / sigma < alpha) {
+        // std::cout << "path a" << std::endl;
+        ret_val = exp(-0.5 * (x - x_bar) * (x - x_bar) / (sigma * sigma));
+    } else {
+        // std::cout << "path b" << std::endl;
+        ret_val = A * pow(B + (x - x_bar) / sigma, -1 * n);
+    }
+    ret_val = N * ret_val + offset;
+    // std::cout << "x: " << x << " y: " << ret_val << std::endl;
+    return ret_val;
+}
+
+float calculate_signal_v7(uint32_t *adc_values, float gain) {
+    TF1 *crystal_ball_fit = new TF1("crystal_ball", crystal_ball, 4, 20, 6);
+    crystal_ball_fit->SetParameters(1, 1, 6, 4, 2);
+    crystal_ball_fit->SetParLimits(0, 1, 1.2);   // alpha
+    crystal_ball_fit->SetParLimits(1, 0.2, 0.6);   // n
+    crystal_ball_fit->SetParLimits(2, 0.5, 4.5);   // x_bar
+    crystal_ball_fit->SetParLimits(3, 0.25, 0.65);   // sigma
+    crystal_ball_fit->SetParLimits(4, 0, 2000);  // N
+    float pedestal = (adc_values[0] + adc_values[1] + adc_values[2]) / 3.0f;
+    crystal_ball_fit->FixParameter(5, pedestal);
+    
+    // Fit the samples from 3 to 19
+    TH1F *temp_hist = new TH1F("temp_hist", "temp_hist", 20, 0, 20);
+    for (int i = 3; i < 20; ++i) {
+        float sample = adc_values[i];
+        temp_hist->SetBinContent(i, sample);
+    }
+    temp_hist->Fit(crystal_ball_fit, "RQ");
+    // std::cout << "Fit parameters: ";
+    // for (int i = 0; i < 5; ++i) {
+    //     std::cout << crystal_ball_fit->GetParameter(i) << " ";
+    // }
+    // std::cout << std::endl;
+    // std::cout << "Fit chi2/ndf: " << crystal_ball_fit->GetChisquare() / crystal_ball_fit->GetNDF() << std::endl;
+    float signal = crystal_ball_fit->GetParameter(4);;
+    delete temp_hist;
+    delete crystal_ball_fit;
+    return signal * gain;
+    
 }
 
 float calculate_signal(uint32_t *adc_values, float gain) {
@@ -159,6 +288,8 @@ float calculate_signal(uint32_t *adc_values, float gain) {
         return calculate_signal_v4(adc_values, gain);
     } else if (signal_method == 5) {
         return calculate_signal_v5(adc_values, gain);
+    } else if (signal_method == 7) {
+        return calculate_signal_v7(adc_values, gain);  
     } else {
         // Default to v2
         return calculate_signal_v2(adc_values, gain);

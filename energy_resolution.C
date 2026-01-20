@@ -173,12 +173,15 @@ void energy_resolution() {
         TTree* tree = (TTree*)root_file->Get("events");
         uint32_t adc[576][20];
         uint32_t tot[576][20];
+        uint32_t toa[576][20];
         int tot_events = 0;
         tree->SetBranchAddress("adc", &adc);
         tree->SetBranchAddress("tot", &tot);
+        tree->SetBranchAddress("toa", &toa);
         tree->SetBranchStatus("*", 0);
         tree->SetBranchStatus("adc", 1);
         tree->SetBranchStatus("tot", 1);
+        tree->SetBranchStatus("toa", 1);
 
         TH1 *peak_widths = nullptr;
         // if (use_widths) {
@@ -208,6 +211,22 @@ void energy_resolution() {
             float central_nine_signal = 0.0f;
             float total_signal = 0.0f;
             bool is_tot_event = false;
+
+            uint32_t central_toa = 0;
+            int index = mapping[12][0]; // Central crystal, first SiPM for event ToA selection
+            bool outside_toa_range = false;
+            for (int i = 0; i < 20; i++) {
+                if (toa[index][i]) {
+                    central_toa = toa[index][i];
+                    if (central_toa < 200 || central_toa > 600) {
+                        outside_toa_range = true;
+                        break;
+                    }
+                }
+            }
+            if (outside_toa_range) {
+                continue;
+            }
 
             float signals[25];
             for (int crystal = 0; crystal < 25; crystal++) {
@@ -509,12 +528,13 @@ void energy_resolution() {
 
     TF1 *fit_func = new TF1("energy_res_fit", "sqrt([0]*[0] + [1]*[1]/x + [2]*[2]/(x*x))", 1, 5.4);
     fit_func->SetParameter(0, 2);
-    fit_func->SetParameter(4, 2);
-    fit_func->SetParameter(2, 4);
+    fit_func->SetParameter(1, 5);
     fit_func->SetParNames("A", "B", "C");
-    fit_func->SetParLimits(0, 0.5, 10);
-    fit_func->SetParLimits(1, 0.5, 10);
-    fit_func->SetParLimits(2, 0.5, 10);
+    fit_func->SetParameter(2, 2);
+    fit_func->SetParLimits(0, 0, 10);
+    fit_func->SetParLimits(1, 0, 10);
+    fit_func->SetParLimits(2, 0, 10);
+    // fit_func->FixParameter(2, 0);
     auto fit_middle = (TF1*)fit_func->Clone("energy_res_fit_middle");
     res_middle->Fit(fit_middle, "RQME");
     fit_middle->SetLineColor(kBlue);
