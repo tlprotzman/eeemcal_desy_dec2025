@@ -25,7 +25,7 @@
 #include <TFitResultPtr.h>
 #include <TError.h>
 
-float sigma_cut = 200;
+float sigma_cut = 2;
 
 int sipms_to_use = 16;
 
@@ -37,7 +37,7 @@ float sigma_y = 0.195137 * sigma_cut;
 // float adc_calib = 26704.4;  // 32444.1 Signal_ADC = 1 GeV 
 // float adc_calib = 57854.3;  // v3
 
-int signal_method = 4;
+int signal_method = 3;
 
 
 std::map<int, std::vector<int>> read_mapping(const std::string& filename) {
@@ -109,7 +109,7 @@ float calculate_signal_v3(uint32_t *adc_values, float gain) {
 
     // Signal is the sum of all samples above pedestal
     float signal = 0.0f;
-    for (int i = 6; i <= 12; ++i) {
+    for (int i = 6; i <= 8; ++i) {
         float sample = adc_values[i] - pedestal;
         if (sample > 0) {
             signal += sample;

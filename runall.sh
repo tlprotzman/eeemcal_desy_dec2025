@@ -13,12 +13,12 @@ rm output/tot_calibration_values.root
 set -e
 
 echo -e "\033[32mRunning gain_match.C\033[0m"
-root -q -b -x -l gain_match.C
+root -q -b -x -l gain_match.cxx
 echo -e "\033[32mRunning adc_calibration.C\033[0m"
-root -q -b -x -l adc_calibration.C
+root -q -b -x -l adc_calibration.cxx
 echo -e "\033[32mRunning tot_calibration.C\033[0m"
-root -q -b -x -l tot_calibration.C
+root -q -b -x -l tot_calibration.cxx
 echo -e "\033[32mRunning tot_calibration.C\033[0m"
-root -q -b -x -l tot_calibration.C # Needs to run twice to generate the cuts
+root -q -b -x -l tot_calibration.cxx # Needs to run twice to generate the cuts
 echo -e "\033[32mRunning energy_resolution.C\033[0m"
-root -q -b -x -l energy_resolution.C
+root -q -b -x -l energy_resolution.cxx
